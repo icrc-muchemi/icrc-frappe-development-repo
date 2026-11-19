@@ -1,0 +1,131 @@
+// Frappe dev container. The repository is mounted at /workspace by Compose and
+// the bench is built inside /workspace/development, which is why the workspace
+// folder is one level inside the mount.
+// Docs: https://containers.dev/implementors/json_reference/
+{
+    // The folder the repository is opened from, so a project made from the
+    // template keeps this file as it is. The Compose project takes the
+    // repository's name too, see init-env.sh.
+    "name": "${localWorkspaceFolderBasename}",
+    "dockerComposeFile": "./docker-compose.yml",
+    "service": "frappe",
+    "workspaceFolder": "/workspace/development",
+    "remoteUser": "frappe",
+    "updateRemoteUserUID": false,
+    "shutdownAction": "stopCompose",
+    // Build - proxy args come from the host shell, never hardcoded here. The
+    // image itself is built by docker-compose.yml, which passes no proxy.
+    "build": {
+        "args": {
+            "HTTP_PROXY": "${localEnv:HTTP_PROXY}",
+            "HTTPS_PROXY": "${localEnv:HTTPS_PROXY}"
+        }
+    },
+    // Runs on the HOST before the container is created: generates
+    // .devcontainer/.env, renders seaweedfs-s3.json from it, copies the host's
+    // ~/.gitconfig, ~/.ssh/allowed_signers and ~/.npmrc next to it, writes
+    // the host's home folder into .env as HOST_HOME, and creates the
+    // directories docker-compose.yml bind-mounts from it.
+    // Needs bash and HOME, so on Windows run from WSL2 or with Git for Windows.
+    "initializeCommand": [
+        "bash",
+        ".devcontainer/init-env.sh"
+    ],
+    // No mounts here: every one is in docker-compose.yml, which says why. A
+    // host folder here would need ${localEnv:HOME}, which on Windows the
+    // editor may not have, or have alongside USERPROFILE.
+    //
+    // ssh keys are deliberately absent, the public allowed_signers list aside:
+    // the host's agent is forwarded by the editor, which authenticates a git
+    // remote without a private key ever entering the container. The runtime
+    // proxy is not here either: docker-compose.yml passes it to every process
+    // in the container, not only to an editor session.
+    // No forwardPorts: Compose publishes every port on the host already, and
+    // forwarding one as well makes the editor bind it a second time, which
+    // fails with "address already in use". These attributes only label them.
+    "portsAttributes": {
+        "8000-8005": {
+            "label": "Frappe web",
+            "protocol": "http",
+            "onAutoForward": "notify"
+        },
+        "9000-9005": {
+            "label": "Frappe realtime",
+            "onAutoForward": "silent"
+        },
+        "8025": {
+            "label": "Mailpit",
+            "protocol": "http",
+            "onAutoForward": "silent"
+        },
+        "9100": {
+            "label": "S3 API",
+            "onAutoForward": "silent"
+        },
+        "8080": {
+            "label": "Keycloak",
+            "protocol": "http",
+            "onAutoForward": "silent"
+        },
+        "4000": {
+            "label": "LiteLLM",
+            "protocol": "http",
+            "onAutoForward": "silent"
+        }
+    },
+    "otherPortsAttributes": {
+        "onAutoForward": "ignore"
+    },
+    // pre-commit is upstream's one lifecycle command, kept, and installed with
+    // pip because frappe/bench has no uv. `pre-commit install` then wires the
+    // hooks of .pre-commit-config.yaml into this repository. All of it is
+    // non-fatal: a container that comes up without them is still a working
+    // bench, and CI runs the same hooks on every pull request.
+    "postCreateCommand": "npm install -g @anthropic-ai/claude-code@latest || true; python3 -m pip install --user --no-cache-dir pre-commit && python3 -m pre_commit install || true",
+    // On every start: the firewall, then the plugin volume mounted above and
+    // the skills development/skills.json pins, cloned with gh as the only git
+    // credential helper. post-start.sh says why.
+    "postStartCommand": "bash /workspace/.devcontainer/post-start.sh",
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "terminal.integrated.defaultProfile.linux": "zsh",
+                "remote.autoForwardPorts": false,
+                "sqltools.connections": [
+                    {
+                        "name": "MariaDB",
+                        "driver": "MariaDB",
+                        "server": "mariadb",
+                        "port": 3306,
+                        "username": "root",
+                        // From .devcontainer/.env, which is generated per
+                        // install: there is no password to hardcode here.
+                        "askForPassword": true,
+                        "database": "mysql",
+                        "previewLimit": 50
+                    }
+                ]
+            },
+            "extensions": [
+                "ms-python.python",
+                "charliermarsh.ruff",
+                "esbenp.prettier-vscode",
+                "vue.volar",
+                "mtxr.sqltools",
+                "mtxr.sqltools-driver-mysql",
+                "grapecity.gc-excelviewer",
+                "ms-vscode.live-server"
+            ]
+        },
+        "jetbrains": {
+            "plugins": [
+                "com.anthropic.code.plugin",
+                "PythonCore",
+                "Pythonid"
+            ],
+            "settings": {
+                "com.intellij:app:EditorSettings.soft_wrap_file_masks": "*.md; *.txt; *.rst; *.adoc"
+            }
+        }
+    }
+}
